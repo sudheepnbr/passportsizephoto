@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AI Passport Studio | Final Master</title>
+    <style>
+        :root { --accent: #6f42c1; --bg: #f8f9fa; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); display: flex; justify-content: center; padding: 20px; user-select: none; }
+        
+        .app { 
+            display: flex; gap: 30px; background: white; padding: 30px; 
+            border-radius: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); 
+            align-items: flex-start; 
+        }
+        
+        .controls { width: 320px; flex-shrink: 0; }
+        h2 { margin: 0 0 15px 0; color: #333; font-size: 22px; }
+        label { display: block; font-size: 11px; font-weight: bold; color: #666; margin-top: 15px; text-transform: uppercase; }
+        select, input, button { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ddd; margin-top: 5px; box-sizing: border-box; font-size: 14px; }
+        
+        .custom-dims { display: none; gap: 10px; margin-top: 10px; }
+        .custom-dims div { flex: 1; }
+
+        .ai-btn { background: var(--accent); color: white; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        .gen-btn { background: #007bff; color: white; border: none; font-weight: bold; margin-top: 25px; cursor: pointer; }
+        
+        .btn-group { display: flex; gap: 10px; margin-top: 10px; display: none; }
+        #dlBtn { background: #28a745; color: white; border: none; flex: 1; cursor: pointer;}
+        #printBtn { background: #ffc107; color: #333; border: none; flex: 1; font-weight: bold; cursor: pointer; }
+
+        /* Counter Buttons Styling */
+        .counter-btn { width: 45px !important; background: #eee; cursor: pointer; border: 1px solid #ddd; font-weight: bold; }
+        .counter-btn:hover { background: #e2e2e2; }
+        
+        /* REMOVE DEFAULT ARROWS to stop automatic scrolling */
+        #copyCount::-webkit-outer-spin-button, #copyCount::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        #copyCount { -moz-appearance: textfield; text-align: center; font-weight: bold; }
+
+        /* PREVIEW WRAPPER: Fixes the gray space issue */
+        .preview-wrapper {
+            display: grid; place-items: start; background: #e9ecef;
+            border-radius: 12px; border: 1px solid #dee2e6; overflow: hidden; line-height: 0;
+        }
+
+        canvas { background: white; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: block; cursor: move; margin: 0; }
+        .status { font-size: 11px; text-align: center; color: #888; margin-top: 8px; }
+    </style>
+</head>
+<body>
+
+<div class="app">
+    <div class="controls">
+        <h2>Passport Master</h2>
+        
+        <label>1. Standard Size</label>
+        <select id="country">
+            <option value="600,600">USA / India Visa (2x2")</option>
+            <option value="413,531">Europe / Passport (35x45mm)</option>
+            <option value="custom">-- Custom Size (Manual) --</option>
+        </select>
+
+        <div id="customInputs" class="custom-dims">
+            <div><label>Width (px)</label><input type="number" id="customW" value="500"></div>
+            <div><label>Height (px)</label><input type="number" id="customH" value="500"></div>
+        </div>
+
+        <label>2. Upload Photo</label>
+        <input type="file" id="upload" accept="image/*">
+        
+        <button class="ai-btn" id="runAI">✨ REMOVE BACKGROUND</button>
+        <div id="status" class="status">Waiting for upload...</div>
+
+        <label>3. Background Color</label>
+        <input type="color" id="bgColor" value="#ffffff">
+
+        <label>4. Zoom Level</label>
+        <input type="range" id="zoom" min="0.1" max="5" step="0.01" value="1">
+
+        <label>5. Number of Copies (Max 8)</label>
+        <div style="display: flex; gap: 5px; margin-top: 5px;">
+            <button type="button" class="counter-btn" onclick="changeCount(-1)">-</button>
+            <input type="number" id="copyCount" value="8" min="1" max="8" readonly>
+            <button type="button" class="counter-btn" onclick="changeCount(1)">+</button>
+        </div>
+
+        <button class="gen-btn" id="makeSheet">Generate Photo Sheet</button>
+        
+        <div class="btn-group" id="actionGroup">
+            <button id="dlBtn">Download PNG</button>
+            <button id="printBtn">🖨️ Print Sheet</button>
+        </div>
+    </div>
+
+    <div class="preview-wrapper">
+        <canvas id="photoCanvas"></canvas>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('photoCanvas');
+    const ctx = canvas.getContext('2d');
+    const API_KEY = 'kZ95V2DzxiCKY5yddrjLTqvk';
+
+    let currentImg = new Image();
+    let sheetCanvas = null;
+    let state = { x: 0, y: 0, scale: 1, isDragging: false, startX: 0, startY: 0 };
+
+    function changeCount(delta) {
+        const input = document.getElementById('copyCount');
+        let val = parseInt(input.value) + delta;
+        if (val >= 1 && val <= 8) input.value = val;
+    }
+
+    function dataURLtoBlob(dataurl) {
+        let arr = dataurl.split(','), mime = arr[0].match(/:(.*?);/)[1],
+            bstr = atob(arr[1]), n = bstr.length, u8arr = new Uint8Array(n);
+        while(n--) u8arr[n] = bstr.charCodeAt(n);
+        return new Blob([u8arr], {type:mime});
+    }
+
+    document.getElementById('upload').onchange = (e) => {
+        const reader = new FileReader();
+        reader.onload = (f) => { 
+            currentImg.src = f.target.result; 
+            currentImg.onload = () => { resetView(); draw(); document.getElementById('status').innerText = "Photo Ready"; };
+        };
+        reader.readAsDataURL(e.target.files[0]);
+    };
+
+    function getSelectedSize() {
+        const val = document.getElementById('country').value;
+        if (val === 'custom') return [parseInt(document.getElementById('customW').value) || 500, parseInt(document.getElementById('customH').value) || 500];
+        return val.split(',').map(Number);
+    }
+
+    function resetView() {
+        const [w, h] = getSelectedSize();
+        state.scale = h / currentImg.height;
+        state.x = (w - currentImg.width * state.scale) / 2;
+        state.y = 0;
+        document.getElementById('zoom').value = state.scale;
+    }
+
+    document.getElementById('runAI').onclick = async () => {
+        if(!currentImg.src) return alert("Upload a photo first");
+        document.getElementById('status').innerText = "AI is working...";
+        const formData = new FormData();
+        formData.append('image_file', dataURLtoBlob(currentImg.src));
+        formData.append('size', 'auto');
+        try {
+            const response = await fetch('https://api.remove.bg/v1.0/removebg', {
+                method: 'POST', headers: { 'X-Api-Key': API_KEY }, body: formData
+            });
+            if (response.ok) {
+                const blob = await response.blob();
+                currentImg.src = URL.createObjectURL(blob);
+                currentImg.onload = () => { document.getElementById('status').innerText = "Background Removed!"; draw(); };
+            }
+        } catch (err) { alert("API Error."); }
+    };
+
+    function draw() {
+        const [w, h] = getSelectedSize();
+        canvas.width = w; canvas.height = h;
+        ctx.fillStyle = document.getElementById('bgColor').value;
+        ctx.fillRect(0, 0, w, h);
+        if(!currentImg.src) return;
+        const z = parseFloat(document.getElementById('zoom').value);
+        ctx.drawImage(currentImg, state.x, state.y, currentImg.width * z, currentImg.height * z);
+    }
+
+    canvas.onmousedown = (e) => { state.isDragging = true; state.startX = e.offsetX - state.x; state.startY = e.offsetY - state.y; };
+    window.onmousemove = (e) => {
+        if (!state.isDragging) return;
+        const rect = canvas.getBoundingClientRect();
+        state.x = (e.clientX - rect.left) - state.startX;
+        state.y = (e.clientY - rect.top) - state.startY;
+        draw();
+    };
+    window.onmouseup = () => state.isDragging = false;
+    canvas.onwheel = (e) => {
+        e.preventDefault();
+        let z = parseFloat(document.getElementById('zoom').value);
+        z += (e.deltaY < 0 ? 0.05 : -0.05);
+        document.getElementById('zoom').value = Math.min(Math.max(0.1, z), 5);
+        draw();
+    };
+
+    document.getElementById('country').onchange = () => {
+        document.getElementById('customInputs').style.display = (document.getElementById('country').value === 'custom') ? 'flex' : 'none';
+        if(currentImg.src) resetView();
+        draw();
+    };
+    document.querySelectorAll('input').forEach(i => i.oninput = draw);
+
+    document.getElementById('makeSheet').onclick = () => {
+        const [w, h] = getSelectedSize();
+        const count = parseInt(document.getElementById('copyCount').value) || 1;
+        const gap = 40; const margin = 40; const cols = 4;
+        const rows = Math.ceil(count / cols);
+
+        sheetCanvas = document.createElement('canvas');
+        const sCtx = sheetCanvas.getContext('2d');
+        sheetCanvas.width = (w * cols) + (gap * (cols - 1)) + (margin * 2);
+        sheetCanvas.height = (h * rows) + (gap * (rows - 1)) + (margin * 2);
+
+        sCtx.fillStyle = "white"; sCtx.fillRect(0, 0, sheetCanvas.width, sheetCanvas.height);
+        for(let i = 0; i < count; i++) {
+            const posX = margin + ((i % cols) * (w + gap));
+            const posY = margin + (Math.floor(i / cols) * (h + gap));
+            sCtx.drawImage(canvas, posX, posY);
+        }
+        document.getElementById('actionGroup').style.display = 'flex';
+        alert("Your Photo is ready to Download or Print !");
+    };
+
+    document.getElementById('dlBtn').onclick = () => {
+        const a = document.createElement('a');
+        a.download = 'Passport_Sheet.png';
+        a.href = sheetCanvas.toDataURL('image/png', 1.0);
+        a.click();
+    };
+
+    document.getElementById('printBtn').onclick = () => {
+        const win = window.open('', '_blank');
+        win.document.write(`<html><body onload="window.print();window.close()"><img src="${sheetCanvas.toDataURL()}" style="max-width:100%;"></body></html>`);
+        win.document.close();
+    };
+</script>
+</body>
+</html>
